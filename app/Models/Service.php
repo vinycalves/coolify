@@ -78,14 +78,18 @@ class Service extends BaseModel
     ];
 
     /**
-     * Sensitive fields hidden by default in serialized output (toArray/toJson).
-     * API controllers should call makeVisible([...]) for callers with the
-     * `read:sensitive` or `root` token ability. Internal compose generators
-     * must makeVisible explicitly before toArray().
+     * Docker Compose definitions hidden by default in serialized output (toArray/toJson).
+     * API controllers and MCP tools should call makeVisible([...]) for callers with the
+     * `read:sensitive` or `root` token ability. Internal compose generators must
+     * makeVisible explicitly before toArray().
      */
-    protected $hidden = [
+    public const COMPOSE_ATTRIBUTES = [
         'docker_compose',
         'docker_compose_raw',
+    ];
+
+    protected $hidden = [
+        ...self::COMPOSE_ATTRIBUTES,
     ];
 
     protected function casts(): array

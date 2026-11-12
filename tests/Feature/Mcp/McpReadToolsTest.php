@@ -2693,3 +2693,41 @@ test('get_service does not return the server of the service', function () {
         ->and($data)->not->toHaveKey('server')
         ->and(json_encode($data))->not->toContain($this->server->ip);
 });
+
+test('get_service returns the compose definitions to a read:sensitive token of an owner', function () {
+    $service = Service::factory()->create([
+        'environment_id' => $this->environment->id,
+        'server_id' => $this->server->id,
+        'destination_id' => $this->destination->id,
+        'destination_type' => $this->destination->getMorphClass(),
+        'docker_compose_raw' => "services:\n  app:\n    image: nginx:alpine",
+        'docker_compose' => "services:\n  app:\n    image: nginx:alpine",
+    ]);
+
+    $response = mcpSensitiveReadCall('get_service', ['uuid' => $service->uuid]);
+    $response->assertOk();
+    $data = mcpReadJson($response)['data'];
+
+    expect($data)->toHaveKey('docker_compose_raw')
+        ->and($data['docker_compose_raw'])->toContain('nginx:alpine')
+        ->and($data)->toHaveKey('docker_compose')
+        ->and($data['docker_compose'])->toContain('nginx:alpine');
+});
+
+test('get_service hides the compose definitions from a token without read:sensitive', function () {
+    $service = Service::factory()->create([
+        'environment_id' => $this->environment->id,
+        'server_id' => $this->server->id,
+        'destination_id' => $this->destination->id,
+        'destination_type' => $this->destination->getMorphClass(),
+        'docker_compose_raw' => "services:\n  app:\n    image: nginx:alpine",
+        'docker_compose' => "services:\n  app:\n    image: nginx:alpine",
+    ]);
+
+    $response = mcpReadCall('get_service', ['uuid' => $service->uuid]);
+    $response->assertOk();
+    $data = mcpReadJson($response)['data'];
+
+    expect($data)->not->toHaveKey('docker_compose_raw')
+        ->and($data)->not->toHaveKey('docker_compose');
+});
