@@ -49,19 +49,24 @@ class ScanImage
 {
     use AsAction;
 
-    /** lockTtl() without its SBOM and its two Grype runs. */
-    private const LOCK_TTL_WITHOUT_SCANNERS = 2 * self::TIMEOUT_DEFAULT + self::TIMEOUT_DB_UPDATE
+    /**
+     * Two db-status checks at the highest Grype time limit, the database update, two inspects, a pull, the disk
+     * check, packages, and cleanup.
+     */
+    private const MAX_STEPS_WITHOUT_SBOM_AND_GRYPE = 2 * (ScannerCommands::MAX_GRYPE_TIMEOUT + self::STEP_MARGIN) + self::TIMEOUT_DB_UPDATE
         + 2 * self::TIMEOUT_DEFAULT + self::TIMEOUT_PULL
         + self::TIMEOUT_DEFAULT + self::TIMEOUT_PACKAGES
         + self::TIMEOUT_DEFAULT;
 
+    /** `docker save` and Syft at the highest Syft time limit (the save timeout never goes below TIMEOUT_SAVE). */
+    private const MAX_SBOM_STEP_SECONDS = ScannerCommands::MAX_SYFT_TIMEOUT + ScannerCommands::MAX_SYFT_TIMEOUT + self::STEP_MARGIN;
+
     /** SBOM, packages, and two Grype runs at the highest Syft and Grype time limits: one candidate scan at most. */
-    public const MAX_SCANNER_STEPS_SECONDS = self::TIMEOUT_SAVE + ScannerCommands::MAX_SYFT_TIMEOUT + self::STEP_MARGIN
+    public const MAX_SCANNER_STEPS_SECONDS = self::MAX_SBOM_STEP_SECONDS
         + self::TIMEOUT_PACKAGES + 2 * (ScannerCommands::MAX_GRYPE_TIMEOUT + self::STEP_MARGIN);
 
     /** lockTtl() at the highest Syft and Grype time limits: for job timeouts and marks that do not know the server. */
-    public const MAX_LOCK_TTL = self::LOCK_TTL_WITHOUT_SCANNERS
-        + self::TIMEOUT_SAVE + ScannerCommands::MAX_SYFT_TIMEOUT + self::STEP_MARGIN
+    public const MAX_LOCK_TTL = self::MAX_STEPS_WITHOUT_SBOM_AND_GRYPE + self::MAX_SBOM_STEP_SECONDS
         + 2 * (ScannerCommands::MAX_GRYPE_TIMEOUT + self::STEP_MARGIN);
 
     /**
@@ -76,8 +81,6 @@ class ScanImage
     private const TIMEOUT_DEFAULT = 120;
 
     private const TIMEOUT_DB_UPDATE = 960;
-
-    private const TIMEOUT_SAVE = 600;
 
     private const TIMEOUT_PACKAGES = 360;
 
@@ -247,7 +250,16 @@ class ScanImage
      */
     public static function lockTtl(Server $server): int
     {
-        return self::LOCK_TTL_WITHOUT_SCANNERS + self::sbomStepTimeout($server) + 2 * self::grypeStepTimeout($server);
+        return self::stepsWithoutSbomAndGrype($server) + self::sbomStepTimeout($server) + 2 * self::grypeStepTimeout($server);
+    }
+
+    /** The steps of lockTtl() that do not run Syft or Grype on the image: two db-status checks, the update, inspect, pull, disk check, packages, cleanup. */
+    private static function stepsWithoutSbomAndGrype(Server $server): int
+    {
+        return 2 * self::grypeStepTimeout($server) + self::TIMEOUT_DB_UPDATE
+            + 2 * self::TIMEOUT_DEFAULT + self::TIMEOUT_PULL
+            + self::TIMEOUT_DEFAULT + self::TIMEOUT_PACKAGES
+            + self::TIMEOUT_DEFAULT;
     }
 
     /** The deploy time that a gate keeps for its own scan (SBOM and Grype) after it waited for the lock. */
@@ -259,7 +271,7 @@ class ScanImage
     /** SSH timeout of one SBOM step on the server: `docker save` of a local image, then Syft. */
     public static function sbomStepTimeout(Server $server): int
     {
-        return self::TIMEOUT_SAVE + ScannerCommands::syftTimeout($server) + self::STEP_MARGIN;
+        return ScannerCommands::saveTimeout($server) + ScannerCommands::syftTimeout($server) + self::STEP_MARGIN;
     }
 
     /** SSH timeout of one Grype run on the server. */
@@ -504,9 +516,9 @@ class ScanImage
 
     private static function databaseStatus(ScannerCommands $commands): ?CarbonImmutable
     {
-        $result = self::runStep($commands->server, $commands->dbStatus(), 'db-status', self::TIMEOUT_DEFAULT);
+        $result = self::runStep($commands->server, $commands->dbStatus(), 'db-status', self::grypeStepTimeout($commands->server));
         if (in_array($result['code'], self::EXIT_TIMEOUT, true)) {
-            throw new ScanFailed(ImageScanErrorCode::Timeout, detail: "step db-status exited with code {$result['code']}");
+            throw new ScanFailed(ImageScanErrorCode::Timeout, ['step' => 'db-status'], "step db-status exited with code {$result['code']}");
         }
 
         $status = $result['code'] === 0 ? json_decode($result['payload'], true) : null;

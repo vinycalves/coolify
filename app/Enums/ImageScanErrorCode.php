@@ -37,6 +37,7 @@ enum ImageScanErrorCode: string
             self::Timeout => match ($context['step'] ?? null) {
                 'sbom' => "Syft took too long and was stopped. Raise the Syft time limit on the Vulnerabilities page of {$server}.",
                 'grype' => "Grype took too long and was stopped. Raise the Grype time limit on the Vulnerabilities page of {$server}.",
+                'db-status' => "The vulnerability database check took too long and was stopped. Raise the Grype time limit on the Vulnerabilities page of {$server}.",
                 default => 'The scan took too long and was stopped.',
             },
             self::OutOfMemory => "The scanner ran out of memory and was stopped. Raise the scanner memory limit on the Vulnerabilities page of {$server}, and make sure that {$server} has that much free memory.",

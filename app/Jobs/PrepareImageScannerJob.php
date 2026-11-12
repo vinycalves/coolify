@@ -45,20 +45,21 @@ class PrepareImageScannerJob implements ShouldBeEncrypted, ShouldBeUnique, Shoul
 
     public const FAILED_CONNECTION = 'connection';
 
-    public $timeout = 3600;
+    public $timeout = self::TIMEOUT_PREPARE + self::TIMEOUT_DB_UPDATE + ScannerCommands::MAX_GRYPE_TIMEOUT + 900;
 
     public $tries = ScanResourceImagesJob::MAX_ATTEMPTS;
 
     /** An unexpected error fails the job; only a busy scan lock retries it. */
     public $maxExceptions = 1;
 
-    public $uniqueFor = 3600;
+    public $uniqueFor = self::TIMEOUT_PREPARE + self::TIMEOUT_DB_UPDATE + ScannerCommands::MAX_GRYPE_TIMEOUT + 900;
 
     private const TIMEOUT_PREPARE = 1900;
 
     private const TIMEOUT_DB_UPDATE = 400;
 
-    private const TIMEOUT_DB_STATUS = 120;
+    /** Inspects the scanner images and measures their disk use; both are quick `docker` calls. */
+    private const TIMEOUT_QUICK_STEP = 120;
 
     public function __construct(public Server $server)
     {
@@ -226,13 +227,13 @@ class PrepareImageScannerJob implements ShouldBeEncrypted, ShouldBeUnique, Shoul
         Cache::forget(self::diskUsedCacheKey($server));
 
         try {
-            $status = self::run($commands->dbStatus(), $server, self::TIMEOUT_DB_STATUS);
+            $status = self::run($commands->dbStatus(), $server, ScannerCommands::grypeTimeout($server) + 60);
             $report = ($status['exit_codes']['db-status'] ?? null) === 0 ? json_decode($status['payload'], true) : null;
             $built = is_array($report) && ($report['valid'] ?? false) === true ? ($report['built'] ?? null) : null;
             if (is_string($built)) {
                 Cache::put(self::builtAtCacheKey($server), CarbonImmutable::parse($built)->toIso8601ZuluString(), now()->addDays(7));
                 if (! in_array(Cache::get(self::stateCacheKey($server)), [self::STATE_PULLING, self::STATE_UPDATING_DATABASE], true)
-                    && (self::run($commands->scannerImages(), $server, self::TIMEOUT_DB_STATUS)['exit_codes']['scanner-images'] ?? null) === 0) {
+                    && (self::run($commands->scannerImages(), $server, self::TIMEOUT_QUICK_STEP)['exit_codes']['scanner-images'] ?? null) === 0) {
                     Cache::forget(self::failedStepCacheKey($server));
                     Cache::put(self::stateCacheKey($server), self::STATE_READY, now()->addDays(7));
                     ImageScanUpdated::dispatch($server->team_id, $server->uuid, self::SCAN_UUID);
@@ -243,7 +244,7 @@ class PrepareImageScannerJob implements ShouldBeEncrypted, ShouldBeUnique, Shoul
         }
 
         try {
-            $usage = self::run($commands->diskUsage(), $server, self::TIMEOUT_DB_STATUS);
+            $usage = self::run($commands->diskUsage(), $server, self::TIMEOUT_QUICK_STEP);
             if (isset($usage['sizes']['disk-db']) || isset($usage['sizes']['disk-sboms'])) {
                 Cache::put(self::diskUsedCacheKey($server), ($usage['sizes']['disk-db'] ?? 0) + ($usage['sizes']['disk-sboms'] ?? 0), now()->addDays(7));
             }
